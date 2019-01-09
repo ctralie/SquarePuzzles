@@ -103,7 +103,7 @@ def getLocalPCA(X, eps_pca, gammadim = 0.9, K_usqr = lambda u: np.exp(-5*u)*(u <
     return bases
 
 
-def getConnectionLaplacian(ws, Os, N, k):
+def getConnectionLaplacian(ws, Os, N, k, weighted=True):
     """
     Given a set of weights and corresponding orientation matrices,
     return k eigenvectors of the connection Laplacian.
@@ -117,6 +117,8 @@ def getConnectionLaplacian(ws, Os, N, k):
         Number of vertices in the graph
     k: int
         Number of eigenvectors to compute
+    weighted: boolean
+        Whether to normalize by the degree
     
     Returns
     -------
@@ -130,10 +132,6 @@ def getConnectionLaplacian(ws, Os, N, k):
     ## Step 1: Create D^-1 matrix
     deg = np.array(W.sum(1)).flatten()
     deg[deg == 0] = 1
-    deginv = 1.0/deg
-    I = (np.arange(N)[:, None]*np.ones((1, d))).flatten()
-    V = (deginv[:, None]*np.ones((1, d))).flatten()
-    DInv = sparse.coo_matrix((V, (I, I)), shape=(N*d, N*d)).tocsr()
 
     ## Step 2: Create S matrix
     I = []
@@ -144,15 +142,17 @@ def getConnectionLaplacian(ws, Os, N, k):
     Isoff = Isoff.flatten()
     for idx in range(ws.shape[0]):
         [i, j, wij] = ws[idx, :]
+        i, j = int(i), int(j)
         wijOij = wij*Os[idx]
+        if weighted:
+            wijOij /= deg[i]
         wijOij = (wijOij.flatten()).tolist()
         I.append((i*d + Isoff).tolist())
         J.append((j*d + Jsoff).tolist())
         V.append(wijOij)
     I, J, V = np.array(I).flatten(), np.array(J).flatten(), np.array(V).flatten()
     S = sparse.coo_matrix((V, (I, J)), shape=(N*d, N*d)).tocsr()
-    DInvS = DInv.dot(S)
-    return eigsh(DInvS)
+    return eigsh(S, which='LA', k=k)
 
 
 def getConnectionLaplacianPC(X, eps_pca, gammadim, eps):
@@ -163,7 +163,7 @@ def getConnectionLaplacianPC(X, eps_pca, gammadim, eps):
                         EXAMPLES
 #####################################################"""
 
-def testConnectionLaplacianSquareGrid(N, seed=0):
+def testConnectionLaplacianSquareGrid(N, seed=0, torus = False):
     """
     Randomly rotate square tiles on an NxN grid
     Add increasing amounts of noise to some of the Os
@@ -175,36 +175,40 @@ def testConnectionLaplacianSquareGrid(N, seed=0):
     for i in range(N):
         for j in range(N):
             idxi = i*N+j
-            for di in [-1, 1]:
-                if i + di < 0 or i + di >= N:
-                    continue
-                for dj in [-1, 1]:
-                    if j + dj < 0 or j + dj >= N:
+            for [di, dj] in [[-1, 0], [1, 0], [0, 1], [0, -1]]:
+                i2 = i+di
+                j2 = j+dj
+                if torus:
+                    i2, j2 = i2%N, j2%N
+                else:
+                    if i2 < 0 or j2 < 0 or i2 >= N or j2 >= N:
                         continue
-                    idxj = (i+di)*N+j+dj
-                    ws.append([idxi, idxj, 1.0])
-                    # Oij moves vectors from j to i
-                    theta = thetas[i+di, j+dj] - thetas[i, j]
-                    c = np.cos(theta)
-                    s = np.sin(theta)
-                    Oij = np.array([[c, -s], [s, c]])
-                    Os.append(Oij)
+                idxj = i2*N+j2
+                ws.append([idxi, idxj, 1.0])
+                # Oij moves vectors from j to i
+                theta = thetas[i2, j2] - thetas[i, j]
+                c = np.cos(theta)
+                s = np.sin(theta)
+                Oij = np.array([[c, -s], [s, c]])
+                Os.append(Oij)
     ws = np.array(ws)
     w, v = getConnectionLaplacian(ws, Os, N**2, 2)
     print(w)
     ax = plt.gca()
     for idx in range(N*N):
         i, j = np.unravel_index(idx, (N, N))
-        vidx = v[idx*2:(idx+1)*2, 0]
-        # Bring into world coordinates
-        c = np.cos(thetas[i, j])
-        s = np.sin(thetas[i, j])
-        Oij = np.array([[c, -s], [s, c]])
-        vidx = Oij.dot(vidx)
-        #vidx = vidx/np.sqrt(np.sum(vidx**2))
-        #vidx = Oij[:, 0]*0.5
         plt.scatter([j], [i], 20, 'k')
-        ax.arrow(j, i, vidx[1], vidx[0])
+        for k in [0]:
+            vidx = v[idx*2:(idx+1)*2, k]
+            # Bring into world coordinates
+            c = np.cos(thetas[i, j])
+            s = np.sin(thetas[i, j])
+            Oij = np.array([[c, -s], [s, c]])
+            vidx = Oij.dot(vidx)
+            vidx = 0.5*vidx/np.sqrt(np.sum(vidx**2))
+            #vidx = Oij[:, 0]*0.5
+            ax.arrow(j, i, vidx[1], vidx[0], head_width=0.1, head_length=0.2)
+    plt.axis('equal')
     plt.show()
 
 
@@ -261,4 +265,4 @@ def testVDM3D():
 
 if __name__ == '__main__':
     #testVDM3D()
-    testConnectionLaplacianSquareGrid(5)
+    testConnectionLaplacianSquareGrid(10)
