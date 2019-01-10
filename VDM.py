@@ -63,7 +63,7 @@ def getLocalPCA(X, eps_pca, gammadim = 0.9, K_usqr = lambda u: np.exp(-5*u)*(u <
     
     Returns
     -------
-    bases: list of ndarray(d, p)
+    bases: list of ndarray(p, d)
         All of the orthonormal basis matrices for each point
     """
     N = X.shape[0]
@@ -155,8 +155,64 @@ def getConnectionLaplacian(ws, Os, N, k, weighted=True):
     return eigsh(S, which='LA', k=k)
 
 
-def getConnectionLaplacianPC(X, eps_pca, gammadim, eps):
-    pass
+def getConnectionLaplacianPC(X, k, gammadim, eps_pca, eps_w, \
+                            K_usqr_pca = lambda u: np.exp(-5*u)*(u <= 1), \
+                            K_usqr_w = lambda u: np.exp(-5*u)*(u <= 1)):
+    
+    """
+    Compute eigenvectors of a connection Laplacian estimated from Local
+    PCA on a point cloud
+    Parameters
+    ----------
+    X: ndarray(N, p)
+        A point cloud with N points in p dimensions
+    k: int
+        Number of eigenvectors to compute
+    gammadim: float
+        Explained variance ratio for local PCA
+    eps_pca: float
+        The epsilon to use when doing local PCA
+    eps_w: float
+        The epsilon to use when computing the affinity matrix
+    K_usqr_pca: function float->float
+        Kernel function for local PCA
+    K_usqr_w: function float->float
+        Kernel function for affinity matrix
+    
+    Returns
+    -------
+    w: ndarray(k)
+        Array of k eigenvalues
+    v: ndarray(N*d, k)
+        Array of the corresponding eigenvectors
+    bases: N-length list of ndarray(p, d)
+        All of the orthonormal basis matrices for each point
+    """
+    N = X.shape[0]
+
+    ## Step 1: Perform local PCA
+    bases = getLocalPCA(X, eps_pca, gammadim, K_usqr_pca)
+
+    ## Step 2: Compute the affinity weights and the
+    # orthogonal transformation matrices between points
+    # which are connected to each other
+    ws = []
+    Os = []
+    for i in range(N):
+        dsqr = getdists_sqr(X, i, exclude_self=True)
+        di = K_usqr_w(dsqr/eps_w)
+        OiT = bases[i].T
+        for w, j in zip(di[di > 0], np.arange(N)[di > 0]):
+            ws.append([i, j, w])
+            U, _, VT = linalg.svd(OiT.dot(bases[j]))
+            Oij = U.dot(VT)
+            Os.append(Oij)
+    ws = np.array(ws)
+    
+    ## Step 3: Compute the connection Laplacian
+    w, v = getConnectionLaplacian(ws, Os, N, k, weighted=True)
+    return w, v, bases
+
 
 
 """#####################################################
@@ -167,6 +223,14 @@ def testConnectionLaplacianSquareGrid(N, seed=0, torus = False):
     """
     Randomly rotate square tiles on an NxN grid
     Add increasing amounts of noise to some of the Os
+    Parameters
+    ----------
+    N: int
+        Dimension of grid
+    seed: int
+        Seed for random initialization of vector angles
+    torus: boolean
+        Whether this grid is thought of as on the torus or not
     """
     np.random.seed(seed)
     thetas = 2*np.pi*np.random.rand(N, N)
@@ -234,6 +298,23 @@ def getTorusKnot(p, q, pt):
     X[:, 2] = -np.sin(q*t)
     return X
 
+def getNDEllipse(u, v, pt):
+    """
+    Get an N-dimensional ellipse point cloud
+    Parameters
+    ----------
+    u: ndarray(1, N)
+        First axis
+    v: ndarray(1, N)
+        Second axis
+    pt: ndarray(M)
+        Parameterization in the interval [0, 1]
+    """
+    t = 2*np.pi*pt
+    t = t[:, None]
+    return np.cos(t)*u + np.sin(t)*v
+
+
 class Arrow3D(FancyArrowPatch):
     def __init__(self, xs, ys, zs, *args, **kwargs):
         FancyArrowPatch.__init__(self, (0,0), (0,0), *args, **kwargs)
@@ -245,24 +326,82 @@ class Arrow3D(FancyArrowPatch):
         self.set_positions((xs[0],ys[0]),(xs[1],ys[1]))
         FancyArrowPatch.draw(self, renderer)
 
-def testVDM3D():
+def testConnectionLaplacian3D():
     np.random.seed(10)
-    X = getTorusKnot(2, 3, np.random.rand(1000))
-    X += 0.05*np.random.randn(X.shape[0], X.shape[1])
-    bases = getLocalPCA(X, eps_pca=0.1, gammadim=0.8)
+    #X = getTorusKnot(2, 3, np.random.rand(1000))
+    X = getNDEllipse(np.random.randn(1, 3), np.random.randn(1, 3), np.random.rand(100))
+    #X += 0.05*np.random.randn(X.shape[0], X.shape[1])
+    eps = 1.0
+    _, v, bases = getConnectionLaplacianPC(X, k=2, gammadim=0.8, eps_pca = eps, eps_w = eps)
+    d = bases[0].shape[1]
 
-    ax = plt.subplot(111, projection='3d')
-    ax.scatter(X[:, 0], X[:, 1], X[:, 2])
     (perm, _) = getGreedyPerm(X)
-    for idx in perm[0:40]:
+    perm = perm[0:50]
+    plt.figure(figsize=(12, 6))
+    ax = plt.subplot(121, projection='3d')
+    ax.scatter(X[:, 0], X[:, 1], X[:, 2])
+    for idx in perm:
         x0 = X[idx, :]
         u = bases[idx][:, 0]
         x = np.concatenate((x0[None, :], x0[None, :] + 0.3*u[None, :]), 0)
         a = Arrow3D(x[:, 0], x[:, 1], x[:, 2], mutation_scale=20, \
                 lw=2, arrowstyle="-|>", color="r")
         ax.add_artist(a)
+
+    ax = plt.subplot(122, projection='3d')
+    ax.scatter(X[:, 0], X[:, 1], X[:, 2])
+    for idx in perm:
+        x1 = X[idx, :]
+        Oi = bases[idx]
+        ui = v[idx*d:(idx+1)*d, 1]
+        ui = Oi.dot(ui) # Transform into world coordinates
+        x2 = x1 + 0.5*ui
+        x = np.concatenate((x1[None, :], x2[None, :]), 0)
+        a = Arrow3D(x[:, 0], x[:, 1], x[:, 2], mutation_scale=20, \
+                lw=2, arrowstyle="-|>", color="r")
+        ax.add_artist(a)
+
+    plt.show()
+
+
+def testConnectionLaplacian2D():
+    np.random.seed(10)
+    ts = np.random.rand(100)
+    X = getNDEllipse(np.random.randn(1, 2), np.random.randn(1, 2), ts)
+    eps = 0.5
+    _, v, bases = getConnectionLaplacianPC(X, k=2, gammadim=0.8, eps_pca = eps, eps_w = eps)
+    d = bases[0].shape[1]
+
+    (perm, _) = getGreedyPerm(X)
+    perm = perm[0:20]
+    plt.figure(figsize=(12, 6))
+    plt.subplot(121)
+    plt.scatter(X[:, 0], X[:, 1])
+    ax = plt.gca()
+    for idx in perm:
+        x0 = X[idx, :]
+        u = bases[idx][:, 0]
+        u = 0.1*u/np.sqrt(np.sum(u**2))
+        ax.arrow(x0[0], x0[1], u[0], u[1], head_width=0.1, head_length=0.2)
+    plt.axis('equal')
+    plt.title("Local PCA")
+
+    plt.subplot(122)
+    plt.scatter(X[:, 0], X[:, 1])
+    ax = plt.gca()
+    for idx in perm:
+        x0 = X[idx, :]
+        Oi = bases[idx]
+        u = v[idx*d:(idx+1)*d, 1]
+        u = Oi.dot(u) # Transform into world coordinates
+        u = 0.1*u/np.sqrt(np.sum(u**2))
+        ax.arrow(x0[0], x0[1], u[0], u[1], head_width=0.1, head_length=0.2)
+    plt.axis('equal')
+    plt.title("Local PCA + Connection Laplacian")
+
     plt.show()
 
 if __name__ == '__main__':
-    #testVDM3D()
-    testConnectionLaplacianSquareGrid(10)
+    testConnectionLaplacian2D()
+    #testConnectionLaplacian3D()
+    #testConnectionLaplacianSquareGrid(10)
