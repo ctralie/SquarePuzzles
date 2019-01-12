@@ -328,11 +328,11 @@ class Arrow3D(FancyArrowPatch):
 
 def testConnectionLaplacian3D():
     np.random.seed(10)
-    #X = getTorusKnot(2, 3, np.random.rand(1000))
-    X = getNDEllipse(np.random.randn(1, 3), np.random.randn(1, 3), np.random.rand(100))
+    X = getTorusKnot(2, 3, np.random.rand(1000))
+    #X = getNDEllipse(np.random.randn(1, 3), np.random.randn(1, 3), np.random.rand(100))
     #X += 0.05*np.random.randn(X.shape[0], X.shape[1])
     eps = 1.0
-    _, v, bases = getConnectionLaplacianPC(X, k=2, gammadim=0.8, eps_pca = eps, eps_w = eps)
+    _, v, bases = getConnectionLaplacianPC(X, k=2, gammadim=0.9, eps_pca = eps, eps_w = eps)
     d = bases[0].shape[1]
 
     (perm, _) = getGreedyPerm(X)
@@ -402,6 +402,6 @@ def testConnectionLaplacian2D():
     plt.show()
 
 if __name__ == '__main__':
-    testConnectionLaplacian2D()
+    #testConnectionLaplacian2D()
     #testConnectionLaplacian3D()
-    #testConnectionLaplacianSquareGrid(10)
+    testConnectionLaplacianSquareGrid(10)
