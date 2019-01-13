@@ -1,30 +1,36 @@
 import numpy as np
 import matplotlib.pyplot as plt
-from matplotlib.offsetbox import OffsetImage, AnnotationBbox
+import matplotlib.transforms as mtransforms
 import scipy.misc
 
-def imscatter(X, P, zoom=1):
+def imscatter(X, Rs, P, zoom=1):
     """
     Plot patches in specified locations in R2
     
     Parameters
     ----------
     X : ndarray (N, 2)
-        The positions of each patch in R2
+        The positions of the center of each patch in R2, 
+        with each patch occupying [0, 1] x [0, 1]
+    Rs : list of ndarray(2, 2)
+        Rotation matrices for each patch
     P : ndarray (N, dim, dim, 3)
         An array of all of the patches
     
     """
-    #https://stackoverflow.com/questions/22566284/matplotlib-how-to-plot-images-instead-of-points
+    #https://matplotlib.org/examples/api/demo_affine_image.html
     ax = plt.gca()
     for i in range(P.shape[0]):
-        patch = np.array(P[i, :, :, :])
-        x, y = X[i, :]
-        im = OffsetImage(patch, zoom=zoom, cmap = 'gray')
-        ab = AnnotationBbox(im, (x, y), xycoords='data', frameon=False)
-        ax.add_artist(ab)
-    ax.update_datalim(X)
-    ax.autoscale()
+        p = P[i, :, :, :]
+        im = ax.imshow(p, interpolation='none', extent=(-0.5, 0.5, -0.5, 0.5))
+        m = np.eye(3)
+        m[0:2, 0:2] = Rs[i]
+        m[0:2, 2] = X[i, :]
+        trans = mtransforms.Affine2D()
+        trans.set_matrix(m)
+        im.set_transform(trans + ax.transData)
+    plt.xlim([np.min(X[:, 0])-1, np.max(X[:, 0])+1])
+    plt.ylim([np.min(X[:, 1])-1, np.max(X[:, 1])+1])
     ax.set_xticks([])
     ax.set_yticks([])
 
@@ -71,7 +77,12 @@ def getPatchesColor(I, d):
             P[i, j, :, :, :] = patch
     return P
 
-if __name__ == '__main__':
+def testPlottingPieces():
+    """
+    Come up with a bunch of random rotations for each square piece
+    and plot the result
+    """
+    plt.figure(figsize=(9, 9))
     I = readImage("melayla.jpg")
     d = 28
     PColor = getPatchesColor(I, d)
@@ -80,5 +91,13 @@ if __name__ == '__main__':
     X = np.array([X.flatten(), Y.flatten()])
     X = X.T
     PColor = np.reshape(PColor, (PColor.shape[0]*PColor.shape[1], d, d, 3))
-    imscatter(X, PColor)
+    Rs = []
+    for i in range(X.shape[0]):
+        R = np.random.randn(2, 2)
+        U, _, _ = np.linalg.svd(R)
+        Rs.append(U)
+    imscatter(X, Rs, PColor)
     plt.show()
+
+if __name__ == '__main__':
+    testPlotting()
