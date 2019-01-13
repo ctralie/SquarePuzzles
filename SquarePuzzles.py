@@ -22,6 +22,27 @@ def writeImage(I, filename):
     IRet = np.array(IRet, dtype=np.uint8)
     scipy.misc.imsave(filename, IRet)
 
+def rotateByZMod4(I, g):
+    """
+    Apply the cyclic group rotation by 90 degree increments
+    Parameters
+    Parameters
+    ----------
+    I: ndarray(M, N, 3)
+        A color image
+    g: int
+        Number of CCW increments by which to rotate I
+    Returns
+    --------
+    I: ndarray(M or N, N or M, 3)
+        The rotated image
+    """
+    IRet = np.array(I)
+    for i in range(g%4):
+        IRet = np.swapaxes(IRet, 0, 1)
+        IRet = np.flipud(IRet)
+    return IRet
+
 def getPatchesColor(I, d):
     """
     Given an image I, return all of the dim x dim patches in I
@@ -184,11 +205,10 @@ def getRGB(pL, pR):
     diff = np.array(pL[:, -1, :] - pR[:, 0, :], dtype=float)
     return np.sum(np.abs(diff))
 
-def getOptimalPairRotation(ppL, ppR, evalfn = getMGC):
+def getAllPairRotationScores(ppL, ppR, evalfn = getMGC):
     """
     Given a patch to the left and a patch to the right, 
-    figure out how to optimally rotate both so that
-    they align
+    compute all scores
     Parameters
     ----------
     pL: ndarray(p, p, 3)
@@ -200,19 +220,20 @@ def getOptimalPairRotation(ppL, ppR, evalfn = getMGC):
         to a right patch
     Returns
     -------
-    tuple (int, int):
-        The number of 90 degree CCW rotations of the left
-        and right patch, respectively
+    scores: ndarray(16, 3):
+        First column:  The number of 90 degree CCW rotations of the left patch
+        Second column: The number of 90 degree CCW rotations of the right patch
+        Third column: Score
     """
     pL = np.array(ppL)
     pR = np.array(ppR)
     scores = []
     for rotl in range(4):
-        pL = np.swapaxes(pL, 0, 1)
-        pL = np.fliplr(PL)
+        pL = rotateByZMod4(ppL, rotl)
         for rotr in range(4):
-            
-    pass
+            pR = rotateByZMod4(ppR, rotr)
+            scores.append([rotl, rotr, evalfn(pL, pR)])
+    return np.array(scores)
 
 def testMGC(NToPlot = 5):
     """
@@ -265,30 +286,36 @@ def testMGC(NToPlot = 5):
             plt.axis('off')
         plt.savefig("%i.png"%p0idx, bbox_inches='tight')
 
+def testRotationPairs(evalfn = getMGC):
+    """
+    Test the rotation scores for all patches in an image and
+    count how many are in each configuration (the correct answer
+    should be (0, 0) for most of them ideally)
+    """
+    I = readImage("melayla.jpg")
+    d = 28
+    Ps = getPatchesColor(I, d)
+    minrots = {}
+    getScore = lambda pL, pR: getMGC(pL, pR) + getRGB(pL, pR)
+    for i in range(4):
+        for j in range(4):
+            minrots[(i, j)] = 0
+    for i in range(Ps.shape[0]):
+        print(i)
+        for j in range(Ps.shape[1]-1):
+            pL = Ps[i, j, :, :, :]
+            pR = Ps[i, j+1, :, :, :]
+            scores = getAllPairRotationScores(pL, pR, getScore)
+            idx = np.argmin(scores[:, -1])
+            minrots[(scores[idx, 0], scores[idx, 1])] += 1
+    print(minrots)
+    PercentCorrect = 100.0*float(minrots[(0, 0)])/(Ps.shape[0]*(Ps.shape[1]-1))
+    print("%.3g %s correct"%(PercentCorrect, "%"))
+
+
 """#####################################################
             Type 3 Puzzles (Rotation Only)
 #####################################################"""
-
-def rotateByZMod4(I, g):
-    """
-    Apply the cyclic group rotation by 90 degree increments
-    Parameters
-    Parameters
-    ----------
-    I: ndarray(M, N, 3)
-        A color image
-    g: int
-        Number of CCW increments by which to rotate I
-    Returns
-    --------
-    I: ndarray(M or N, N or M, 3)
-        The rotated image
-    """
-    IRet = np.array(I)
-    for i in range(g%4):
-        IRet = np.swapaxes(IRet, 0, 1)
-        IRet = np.flipud(IRet)
-    return IRet
 
 def solveType3Puzzle(Ps):
     """
@@ -322,7 +349,9 @@ def solveType3Puzzle(Ps):
             p2 = np.array(Ps[i2, j2])
             if k == 1:
                 # Looking at the neighbor below
-                pass
+                p1 = rotateByZMod4(p1, 1)
+                p2 = rotateByZMod4(p2, 1)
+            
 
 
 
@@ -330,4 +359,5 @@ def solveType3Puzzle(Ps):
 
 if __name__ == '__main__':
     #testPlottingPieces()
-    testMGC()
+    #testMGC()
+    testRotationPairs()
