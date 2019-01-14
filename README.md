@@ -1,5 +1,5 @@
 # SquarePuzzles
-## <Christopher J. Tralie>
+## <a href = "http://www.ctralie.com">Christopher J. Tralie</a>
 
 The purpose of this code is to solve "type 3 puzzles" (square pieces in correct position, up to a rotation) using the connection Laplacian solution proposed in the following paper [paper]:
 
@@ -27,4 +27,3 @@ Change the puzzle by changing the seed
 
 
 [paper]: <https://arxiv.org/pdf/1811.03188.pdf>
-[Christopher J. Tralie] <http://www.ctralie.com>
