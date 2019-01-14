@@ -1,8 +1,16 @@
+"""
+Programmer: Chris Tralie
+Purpose: To implement "type 3 puzzles" (square pieces in correct position, up to a rotation)
+using the connection Laplacian solution proposed in [1]
+[1] "Solving Jigsaw Puzzles by The Graph Connection Laplacian" 
+    Vahan Huroyan, Gilad Lerman, Hau-Tieng Wu
+"""
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.transforms as mtransforms
 import scipy.misc
-from VDM import *
+import argparse
+from ConnectionLaplacian import *
 
 
 """####################################################
@@ -429,7 +437,7 @@ def solveType3Puzzle(Ps, ratiocutoff = 1.01, avgweight = 0.5, vote_multiple = Fa
     
     ## Step 3: Figure out which of the possible 4 global rotations
     ## brings the pieces into the best alignment
-    ming = 0
+    gmin = 0
     mincost = np.inf
     for g in range(4):
         Rs = np.array(np.mod(np.round(Rsidxfloat + g), 4), dtype=int)
@@ -447,10 +455,10 @@ def solveType3Puzzle(Ps, ratiocutoff = 1.01, avgweight = 0.5, vote_multiple = Fa
         print("Trying global solution g = %i, cost=%.3g"%(g, cost))
         if cost < mincost:
             mincost = cost
-            ming = g
-    print("ming = %i"%ming)
-    Rsidx = np.array(np.mod(4-np.round(Rsidxfloat + ming), 4), dtype=int)
-    Rsidxfloat = np.mod(Rsidxfloat+ming, 4)
+            gmin = g
+    print("gmin = %i"%gmin)
+    Rsidx = np.array(np.mod(4-np.round(Rsidxfloat + gmin), 4), dtype=int)
+    Rsidxfloat = np.mod(-(Rsidxfloat+gmin), 4)
     return Rsidx, Rsidxfloat
 
 def flattenColumnwise(arr):
@@ -459,11 +467,88 @@ def flattenColumnwise(arr):
         ret += row
     return ret
 
-def testType3Puzzle(seed = 0, d = 50):
-    np.random.seed(seed)
+def animateType3Solution(name, Ps, X, RsidxSol, RsidxSolfloat):
+    """
+    Animate the solution to a rotation puzzle in 5 stages
+    1) The initial puzzle (10 frames)
+    2) The connection laplacian solution (50 frames)
+    3) Paused at the laplacian solution (10 frames)
+    4) Projecting to integer solution (10 frames)
+    5) Final solution (20 frames)
+    """
+    plt.figure()
+    idx = 0
+    M = Ps.shape[0]
+    N = Ps.shape[1]
+    d = Ps.shape[2]
+    PsFlatten = np.reshape(Ps, (Ps.shape[0]*Ps.shape[1], d, d, 3))
+    RsSol = [[None for j in range(N)] for i in range(M)]
+    ## First rotate into relaxed positions
+    # Rotate the smaller abs value of 2*pi-angle and angle
+    RsidxSolfloat = np.array(RsidxSolfloat)
+    RsidxSolfloat[RsidxSolfloat > 2] -= 4
+    for t in np.linspace(0, 1, 50):
+        thetas = RsidxSolfloat*t
+        for i in range(M):
+            for j in range(N):
+                c = np.cos(t*thetas[i, j]*np.pi/2)
+                s = np.sin(t*thetas[i, j]*np.pi/2)
+                RsSol[i][j] = np.array([[c, -s], [s, c]])
+        plt.clf()
+        repeat = 1
+        if t == 0:
+            repeat = 10
+            plt.title("Initial Puzzle")
+        else:
+            plt.title("Connection Laplacian Solution...")
+        for k in range(repeat):
+            plotPatches(plt.gca(), X, flattenColumnwise(RsSol), PsFlatten)
+            plt.axis('off')
+            plt.savefig("%s_%i.png"%(name, idx), bbox_inches='tight', dpi=300)
+            idx += 1
+    plt.title("Connection Laplacian Solution")
+    for i in range(10):
+        plt.savefig("%s_%i.png"%(name, idx), bbox_inches='tight', dpi=300)
+        idx += 1
+    RsidxSol = np.array(RsidxSol)
+    RsidxSol[RsidxSol > 2] -= 4
+    for t in np.linspace(0, 1, 10):
+        plt.clf()
+        for i in range(M):
+            for j in range(N):
+                theta = (1-t)*RsidxSolfloat[i][j] + t*RsidxSol[i, j]
+                c = np.cos(theta*np.pi/2)
+                s = np.sin(theta*np.pi/2)
+                RsSol[i][j] = np.array([[c, -s], [s, c]])
+        plotPatches(plt.gca(), X, flattenColumnwise(RsSol), PsFlatten)
+        plt.axis('off')
+        plt.title("Projecting To Integer Solution")
+        plt.savefig("%s_%i.png"%(name, idx), bbox_inches='tight', dpi=300)
+        idx += 1
+    plt.title("Final Solution")
+    for i in range(20):
+        plt.savefig("%s_%i.png"%(name, idx), bbox_inches='tight', dpi=300)
+        idx += 1
 
+def testType3Puzzle(path, seed = 0, d = 50, animate=False):
+    """
+    Create a type 3 puzzle from an image and solve it
+    Parameters
+    ----------
+    path: string
+        Path to image from which to create the puzzle
+    seed: int
+        Random seed for making the puzzle
+    d: int
+        Patch size in the rotation puzzle
+    animate: boolean
+        If true, save frames for an animation of moving the puzzle pieces.
+        If false, output the solution and the comparison of the
+        vector field to ground truth to a single frame
+    """
+    np.random.seed(seed)
     ## Step 1: Setup puzzle
-    I = readImage("melayla.jpg")
+    I = readImage(path)
     Ps = getPatchesColor(I, d)
     M = Ps.shape[0]
     N = Ps.shape[1]
@@ -472,7 +557,6 @@ def testType3Puzzle(seed = 0, d = 50):
     Y = Ps.shape[0]-Y
     X = np.array([X.flatten(), Y.flatten()])
     X = X.T
-    PsFlatten = np.reshape(Ps, (Ps.shape[0]*Ps.shape[1], d, d, 3))
     # Now actually rotate the pieces
     RsEye = []
     for i in range(M):
@@ -497,6 +581,7 @@ def testType3Puzzle(seed = 0, d = 50):
     NCorrect = np.sum(np.diag(guesses))
 
     ## Step 3: Plot Results
+    PsFlatten = np.reshape(Ps, (Ps.shape[0]*Ps.shape[1], d, d, 3))
     plt.subplot(131)
     plotPatches(plt.gca(), X, RsEye, PsFlatten)
     plt.title("%i %ix%i Pieces"%(M*N, d, d))
@@ -508,7 +593,7 @@ def testType3Puzzle(seed = 0, d = 50):
     ax = plt.gca()
     for i in range(M):
         for j in range(N):
-            theta = RsidxSolfloat[i, j] - RsidxGT[i, j]
+            theta = RsidxSolfloat[i, j] + RsidxGT[i, j]
             v = [0.5*np.cos(np.pi*theta/2), 0.5*np.sin(np.pi*theta/2)]
             c = 'k'
             if not ((RsidxSol[i, j] + RsidxGT[i, j])%4 == 0):
@@ -516,12 +601,18 @@ def testType3Puzzle(seed = 0, d = 50):
             ax.arrow(j, M-i-1, v[0], v[1], head_width=0.1, head_length=0.2, color=c)
     plt.axis('off')
     plt.title("Relaxed Solution vratio=%.3g"%vratio)
+    if not animate:
+        plt.savefig("%s_%i.png"%(path, d), bbox_inches='tight')
 
-    plt.savefig("%i.png"%d, bbox_inches='tight')
+    ## Step 4: Animate if the user wants
+    if animate:
+        animateType3Solution("%s_%i"%(path, d), Ps, X, RsidxSol, RsidxSolfloat)
 
 if __name__ == '__main__':
-    #testPlottingPieces()
-    #testMGC()
-    #testRotationPairs()
-    for d in [20, 30, 40, 50, 100]:
-        testType3Puzzle(d=d)
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--path', type=str, required=True, help="Path to image file from which to make the puzzle")
+    parser.add_argument('--seed', type=int, default=0, help='Random seed for making the puzzle')
+    parser.add_argument('--d', type=int, default=50, help='Dimension of each puzzle piece')
+    parser.add_argument('--animate', type=int, default=0, help='Plot the result of fusion')
+    opt = parser.parse_args()
+    testType3Puzzle(path=opt.path, seed=opt.seed, d=opt.d, animate=bool(opt.animate))

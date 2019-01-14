@@ -1,5 +1,7 @@
 """
-An implementation of vector diffusion maps of point clouds in R^d
+Programmer: Chris Tralie
+Purpose: An implementation of the Connection Laplacian and
+local PCA for point clouds in R^d
 """
 import numpy as np
 import numpy.linalg as linalg
