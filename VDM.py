@@ -152,7 +152,12 @@ def getConnectionLaplacian(ws, Os, N, k, weighted=True):
         V.append(wijOij)
     I, J, V = np.array(I).flatten(), np.array(J).flatten(), np.array(V).flatten()
     S = sparse.coo_matrix((V, (I, J)), shape=(N*d, N*d)).tocsr()
-    return eigsh(S, which='LA', k=k)
+    w, v = eigsh(S, which='LA', k=k)
+    # Put largest first
+    idx = np.argsort(-w)
+    w = w[idx]
+    v = v[:, idx]
+    return w, v
 
 
 def getConnectionLaplacianPC(X, k, gammadim, eps_pca, eps_w, \

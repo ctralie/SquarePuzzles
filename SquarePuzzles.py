@@ -327,7 +327,7 @@ def testRotationPairs(evalfn = getMGC):
             Type 3 Puzzles (Rotation Only)
 #####################################################"""
 
-def solveType3Puzzle(Ps, ratiocutoff = 1.1, avgweight = 0.5):
+def solveType3Puzzle(Ps, ratiocutoff = 1.01, avgweight = 0.5):
     """
     Solve a type 3 (rotations only) puzzle
     Parameters
@@ -342,21 +342,22 @@ def solveType3Puzzle(Ps, ratiocutoff = 1.1, avgweight = 0.5):
         of averaging several votes
     Returns
     -------
-    Rs: MxN list of ndarray(2, 2)
-        A list of rotation matrices to apply to each patch
-        so that they're in the proper orientation
+    Rsidx: ndarray(M, N)
+        The element in Z/4 to apply to each patch to bring it
+        into the correct orientation
     """
     M, N = Ps.shape[0], Ps.shape[1]
     NP = M*N
     ws = []
     Os = []
     for i in range(NP):
-        print(i)
+        if i%25 == 0:
+            print("%.3g %s"%(100.0*i/NP, "%"))
         i1, j1 = np.unravel_index(i, (M, N))
         # Look at neighbor directly to the right and
         # directly below.  The others will be filled in
         # by symmetry
-        for k, (di, dj) in enumerate([(0, 1), (1, 0)]):
+        for di, dj in [(0, 1), (1, 0)]:
             i2 = i1+di
             j2 = j1+dj
             if i2 >= M or j2 >= N:
@@ -364,7 +365,7 @@ def solveType3Puzzle(Ps, ratiocutoff = 1.1, avgweight = 0.5):
             j = i2*N+j2
             p1 = np.array(Ps[i1, j1])
             p2 = np.array(Ps[i2, j2])
-            if k == 1:
+            if di == 1 and dj == 0:
                 # Looking at the neighbor below
                 p1 = rotateByZMod4(p1, 1)
                 p2 = rotateByZMod4(p2, 1)
@@ -376,14 +377,15 @@ def solveType3Puzzle(Ps, ratiocutoff = 1.1, avgweight = 0.5):
             if scores[0, -1] > 0:
                 ratios = scores[:, -1]/scores[0, -1]
             scores = scores[ratios < ratiocutoff, :]
+            #scores = np.array([[Rsidx[i1][j1], Rsidx[i2][j2]]])
             if scores.shape[0] == 1:
                 # One rotation is dominating
                 thetai, thetaj = scores[0, 0:2]
                 ws.append([i, j, 1.0])
-                Os.append(RsMod4[int((thetai-thetaj)%4)])
+                Os.append(RsMod4[int((thetaj-thetai)%4)])
                 # Put in symmetric orientation
                 ws.append([j, i, 1.0])
-                Os.append(RsMod4[int((thetaj-thetai)%4)])
+                Os.append(Os[-1].T)
             else:
                 # Need to average several orientations, and make the score lower
                 print("%i Competing"%scores.shape[0])
@@ -396,17 +398,19 @@ def solveType3Puzzle(Ps, ratiocutoff = 1.1, avgweight = 0.5):
                 ws.append([j, i, avgweight])
                 Os.append(R1.T)
     ws = np.array(ws)
-    _, v = getConnectionLaplacian(ws, Os, NP, 2)
-    Rs = []
-    for i in range(M):
-        Rs.append([])
-        for j in range(N):
-            Rs[i].append(None)
+    # Only need to compute the top eigenvector since we know
+    # this is a rotation matrix
+    w, v = getConnectionLaplacian(ws, Os, NP, 1, weighted=True)
+    print(w)
+    Rsidx = np.zeros((M, N), dtype=int)
     for idx in range(NP):
         i, j = np.unravel_index(idx, (M, N))
-        R = v[idx*2:(idx+1)*2, :]
-        Rs[i][j] = R
-    return Rs
+        R = v[idx*2:(idx+1)*2, 0]
+        R = R/np.sqrt(np.sum(R**2))
+        theta = np.round(np.arctan2(R[1], R[0])/(np.pi/2))%4
+        theta = int((4-theta)%4)
+        Rsidx[i, j] = theta
+    return Rsidx
 
 def flattenColumnwise(arr):
     ret = []
@@ -419,15 +423,11 @@ def testType3Puzzle(seed = 0):
 
     ## Step 1: Setup puzzle
     I = readImage("melayla.jpg")
-    d = 28
+    d = 50
     Ps = getPatchesColor(I, d)
     M = Ps.shape[0]
     N = Ps.shape[1]
-    Rsidx = []
-    for i in range(M):
-        Rsidx.append([])
-        for j in range(N):
-            Rsidx[i].append(np.random.randint(0, 4))
+    RsidxGT = np.random.randint(0, 4, (M, N)) #Ground truth rotations
     X, Y = np.meshgrid(np.arange(Ps.shape[1]), np.arange(Ps.shape[0]))
     Y = Ps.shape[0]-Y
     X = np.array([X.flatten(), Y.flatten()])
@@ -437,18 +437,32 @@ def testType3Puzzle(seed = 0):
     RsEye = []
     for i in range(M):
         for j in range(N):
-            Ps[i, j, :, :, :] = rotateByZMod4(Ps[i, j, :, :, :], Rsidx[i][j])
+            Ps[i, j, :, :, :] = rotateByZMod4(Ps[i, j, :, :, :], RsidxGT[i, j])
             RsEye.append(np.eye(2))
 
-    ## Step 2: Solve puzzle
-    RsRes = solveType3Puzzle(Ps)
+    ## Step 2: Solve puzzle and count correct pieces
+    RsidxSol = solveType3Puzzle(Ps)
+    RsSol = []
+    NCorrect = 0
+    for i in range(M):
+        RsSol.append([])
+        for j in range(N):
+            RsSol[i].append(RsMod4[RsidxSol[i, j]])
+            correct = RsidxGT[i, j]
+            guess = (4-RsidxSol[i, j])%4
+            print("%i: %i"%(correct, guess))
+            NCorrect += (correct == guess)
 
     ## Step 3: Plot Results
+    plt.figure(figsize=(12, 9))
     plt.subplot(121)
-    plotPatches(plt.gca(), X, RsEye, PsFlatten)    
+    plotPatches(plt.gca(), X, RsEye, PsFlatten)
+    plt.title("%i %ix%i Pieces"%(M*N, d, d))
     plt.subplot(122)
-    plotPatches(plt.gca(), X, flattenColumnwise(RsRes), PsFlatten)
-    plt.show()
+    plotPatches(plt.gca(), X, flattenColumnwise(RsSol), PsFlatten)
+    plt.title("%i/%i correct"%(NCorrect, M*N))
+            
+    plt.savefig("Type3.png", bbox_inches='tight')
 
 if __name__ == '__main__':
     #testPlottingPieces()
