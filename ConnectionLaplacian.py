@@ -30,8 +30,24 @@ def getdists_sqr(X, i, exclude_self=True):
         dsqr[i] = np.inf # Exclude the point itself
     return dsqr
 
-def getGreedyPerm(X):
-    N = X.shape[0]
+def getGreedyPerm(X, N = -1, verbose=True):
+    """
+    Compute a greedy permutation of the Euclidean points
+    Parameters
+    ----------
+    X: ndarray(N, d)
+        Point cloud with N points in d dimensions
+    N: int
+        Number of points to take in the permutation
+    Returns
+    -------
+    perm: ndarray(N)
+        Indices of points in the greedy permutation
+    lambdas: ndarray(N)
+        Covering radii at different points
+    """
+    if N == -1:
+        N = X.shape[0]
     #By default, takes the first point in the list to be the
     #first point in the permutation, but could be random
     perm = np.zeros(N, dtype=np.int64)
