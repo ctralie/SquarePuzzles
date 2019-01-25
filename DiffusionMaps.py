@@ -5,6 +5,7 @@ from sklearn.decomposition import PCA
 import scipy.io as sio
 from scipy import sparse
 import time
+from mpl_toolkits.mplot3d import Axes3D
 
 def getSSM(X):
     """
@@ -19,68 +20,45 @@ def getSSM(X):
     D = np.sqrt(D)
     return D
 
-def getW(D, K, Mu = 0.5):
+def getDiffusionMap(X, eps, neigs = 4, thresh=5e-4):
     """
-    Return affinity matrix
-    [1] Wang, Bo, et al. "Similarity network fusion for aggregating data types on a genomic scale." 
-        Nature methods 11.3 (2014): 333-337.
-    :param D: Self-similarity matrix
-    :param K: Number of nearest neighbors
+    Perform diffusion maps with a unit timestep, automatically
+    normalizing for nonuniform sampling
+    Parameters
+    ----------
+    X: ndarray(N, d)
+        A point cloud with N points in d dimensions
+    eps: float
+        Kernel scale parameter
+    neigs: int
+        Number of eigenvectors to compute
+    thresh: float
+        Threshold below which to zero out entries in
+        the Markov chain approximation
     """
-    #W(i, j) = exp(-Dij^2/(mu*epsij))
-    DSym = 0.5*(D + D.T)
-    np.fill_diagonal(DSym, 0)
+    tic = time.time()
+    print("Building diffusion map matrix...")
+    D = np.sum(X**2, 1)[:, None]
+    DSqr = D + D.T - 2*X.dot(X.T)
+    K = np.exp(-DSqr/(2*eps))
+    P = np.sum(K, 1)
+    P[P == 0] = 1
+    KHat = (K/P[:, None])/P[None, :]
+    dRow = np.sum(KHat, 1)
+    KHat[KHat < thresh] = 0
+    KHat = sparse.csc_matrix(KHat)
+    M = sparse.diags(dRow).tocsc()
 
-    Neighbs = np.partition(DSym, K+1, 1)[:, 0:K+1]
-    MeanDist = np.mean(Neighbs, 1)*float(K+1)/float(K) #Need this scaling
-    #to exclude diagonal element in mean
-    #Equation 1 in SNF paper [1] for estimating local neighborhood radii
-    #by looking at k nearest neighbors, not including point itself
-    Eps = MeanDist[:, None] + MeanDist[None, :] + DSym
-    Eps = Eps/3
-    W = np.exp(-DSym**2/(2*(Mu*Eps)**2))
-    return W
+    print("Elapsed Time: %.3g"%(time.time()-tic))
 
-def getDiffusionMap(SSM, Kappa, t = -1, includeDiag = True, thresh = 5e-4, NEigs = 51):
-    """
-    :param SSM: Metric between all pairs of points
-    :param Kappa: Number in (0, 1) indicating a fraction of nearest neighbors
-                used to autotune neighborhood size
-    :param t: Diffusion parameter.  If -1, do Autotuning
-    :param includeDiag: If true, include recurrence to diagonal in the markov
-        chain.  If false, zero out diagonal
-    :param thresh: Threshold below which to zero out entries in markov chain in
-        the sparse approximation
-    :param NEigs: The number of eigenvectors to use in the approximation
-    """
-    N = SSM.shape[0]
-    #Use the letters from the delaPorte paper
-    K = getW(SSM, int(Kappa*N))
-    if not includeDiag:
-        np.fill_diagonal(K, np.zeros(N))
-    RowSumSqrt = np.sqrt(np.sum(K, 1))
-    DInvSqrt = sparse.diags([1/RowSumSqrt], [0])
+    print("Solving eigen system...")
+    tic = time.time()
+    # Solve a generalized eigenvalue problem
 
-    #Symmetric normalized Laplacian
-    Pp = (K/RowSumSqrt[None, :])/RowSumSqrt[:, None]
-    Pp[Pp < thresh] = 0
-    Pp = sparse.csr_matrix(Pp)
+    w, v = sparse.linalg.eigsh(KHat, k=neigs, M=M, which='LM')
+    print("Elapsed Time: %.3g"%(time.time()-tic))
+    return w[None, :]*v
 
-    lam, X = sparse.linalg.eigsh(Pp, NEigs, which='LM')
-    lam = lam/lam[-1] #In case of numerical instability
-
-    #Check to see if autotuning
-    if t > -1:
-        lamt = lam**t
-    else:
-        #Autotuning diffusion time
-        lamt = np.array(lam)
-        lamt[0:-1] = lam[0:-1]/(1-lam[0:-1])
-
-    #Do eigenvector version
-    V = DInvSqrt.dot(X) #Right eigenvectors
-    M = V*lamt[None, :]
-    return M/RowSumSqrt[:, None] #Put back into orthogonal Euclidean coordinates
 
 def getPinchedCircle(N):
     t = np.linspace(0, 2*np.pi, N+1)[0:N]
@@ -107,7 +85,6 @@ if __name__ == '__main__':
     SSMOrig = getSSM(X)
     toc = time.time()
     print("Elapsed time SSM: ", toc - tic)
-    Kappa = 0.1
 
     plt.figure(figsize=(12, 5))
     plt.subplot(121)
@@ -123,23 +100,34 @@ if __name__ == '__main__':
     plt.title("Original SSM")
     plt.savefig("Diffusion0.svg", bbox_inches = 'tight')
 
-    ts = [100]
-    for t in ts:
-        plt.clf()
-        M = getDiffusionMap(SSMOrig, Kappa, t)
+
+    plt.figure(figsize=(12, 12))
+    c = plt.get_cmap('Spectral')
+    C = c(np.array(np.round(255.0*np.arange(X.shape[0])/X.shape[0]), dtype=np.int32))
+    C = C[:, 0:3]
+    for i, eps in enumerate(np.linspace(0.01, 2, 200)):
+        M = getDiffusionMap(X, eps, 10)
+        Y = M[:, [-2, -3, -4]]
         SSM = getSSM(M)
-        plt.subplot(121)
-        X = M[:, [-2, -3]]
-        plt.scatter(X[:, 0], X[:, 1], 40, np.arange(N), cmap = 'Spectral', edgecolor = 'none')
-        plt.title("2D Diffusion Map, t = %i, $\kappa = %g$"%(t, Kappa))
-        plt.axis('equal')
-        plt.xlim([np.min(X[:, 0]) - 0.001, np.max(X[:, 0]) + 0.001])
-        plt.ylim([np.min(X[:, 1]) - 0.001, np.max(X[:, 1]) + 0.001])
+
+        plt.clf()
+        plt.subplot(221)
+        plt.imshow(M[:, 0:-1], aspect='auto')
+        plt.subplot(222)
+        plt.imshow(SSM, interpolation = 'nearest', cmap = 'afmhot')
+        plt.title("Diffusion Distance")
+        plt.subplot(223)
+        plt.scatter(Y[:, 0], Y[:, 1], c=C)
         ax = plt.gca()
         ax.set_xticks([])
         ax.set_yticks([])
         ax.set_facecolor((0.15, 0.15, 0.15))
-        plt.subplot(122)
-        plt.imshow(SSM, interpolation = 'nearest', cmap = 'afmhot')
-        plt.title("Diffusion Distance")
-        plt.savefig("Diffusion%i.svg"%t, bbox_inches = 'tight')
+        plt.axis('equal')
+        plt.title("2D Diffusion Map, $\epsilon = %g$"%eps)
+
+        ax = plt.gcf().add_subplot(224, projection='3d')
+        ax.scatter(Y[:, 0], Y[:, 1], Y[:, 2], c=C)
+        plt.title("3D Diffusion Map, $\epsilon = %g$"%eps)
+        
+
+        plt.savefig("%i.png"%i, bbox_inches='tight')
